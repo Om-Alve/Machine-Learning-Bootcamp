@@ -11,6 +11,7 @@ learning_rate = 1e-3
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 eval_iters = 200
 n_embed = 32
+n_heads = 4
 
 torch.manual_seed(42)
 
@@ -54,6 +55,7 @@ def estimate_loss():
     model.train()
     return out
 
+
 class Head(nn.Module):
     def __init__(self,head_size):
         super().__init__()
@@ -73,12 +75,21 @@ class Head(nn.Module):
         out = w @ v
         return out
 
-class BigramModel(nn.Module):
+class MultiHeadAttention(nn.Module):
+    def __init__(self,num_heads,head_size):
+        super().__init__()
+        self.heads = nn.ModuleList([Head(head_size)] for _ in range(num_heads))
+    
+    def forward(self,X):
+        return torch.cat([head(X) for head in self.heads],dim=-1)
+    
+
+class TransformerDecoder(nn.Module):
     def __init__(self):
         super().__init__()
         self.embedding_table = nn.Embedding(vocab_size,n_embed)
         self.positon_embedding = nn.Embedding(block_size,n_embed)
-        self.sa_head = Head(n_embed)
+        self.sa_head = MultiHeadAttention(n_heads,n_embed // n_heads)
         self.lm_head = nn.Linear(n_embed,vocab_size)
     
     def forward(self,x,targets=None):
@@ -98,7 +109,7 @@ class BigramModel(nn.Module):
             loss = None
         return logits,loss
 
-model = BigramModel()
+model = TransformerDecoder()
 m = model.to(device)
 
 optimizer = torch.optim.Adam(model.parameters(),lr=learning_rate)
