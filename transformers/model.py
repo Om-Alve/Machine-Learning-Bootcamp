@@ -3,15 +3,17 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-batch_size = 32
-block_size = 8
+batch_size = 64
+block_size = 64
 max_iters = 3000
 eval_interval= 300
-learning_rate = 1e-3
+learning_rate = 3e-4
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 eval_iters = 200
-n_embed = 32
-n_heads = 4
+n_embed = 300
+n_heads = 5
+n_layer = 6
+dropout = 0.2
 
 torch.manual_seed(42)
 
@@ -55,6 +57,8 @@ def estimate_loss():
     model.train()
     return out
 
+
+
 class FeedForward(nn.Module):
     def __init__(self,n_embd):
         super().__init__()
@@ -62,6 +66,7 @@ class FeedForward(nn.Module):
             nn.Linear(n_embd, 4 * n_embd),
             nn.ReLU(),
             nn.Linear(4 * n_embd, n_embd),
+            nn.Dropout(dropout),
         )
 
     def forward(self,x):
@@ -74,6 +79,7 @@ class Head(nn.Module):
         self.query = nn.Linear(n_embed,head_size,bias=False)
         self.value = nn.Linear(n_embed,head_size,bias=False)
         self.register_buffer('tril',torch.tril(torch.ones(block_size,block_size)))
+        self.dropout = nn.Dropout(dropout)
     def forward(self,x):
         # x : (B,T,n_embed)
         B,T,C = x.shape
@@ -82,6 +88,7 @@ class Head(nn.Module):
         w = q @ k.transpose(-1,-2) / (C ** 0.5) # (B,T,T)
         w = w.masked_fill(self.tril == 0, float('-inf'))
         w = F.softmax(w,dim=-1)
+        w = self.dropout(w)
         v = self.value(x)
         out = w @ v
         return out
@@ -91,19 +98,24 @@ class MultiHeadAttention(nn.Module):
         super().__init__()
         self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
         self.proj = nn.Linear(n_embed,n_embed)
+        self.dropout = nn.Dropout(dropout)
     def forward(self,X):
         out = torch.cat([head(X) for head in self.heads],dim=-1)
         out = self.proj(out)
-        return out
+        return self.dropout(out)
 
 class Block(nn.Module):
     def __init__(self,n_embed,n_heads):
         super().__init__()
         self.sa_heads = MultiHeadAttention(n_heads,n_embed // n_heads)
         self.ffwd = FeedForward(n_embed)
+        self.ln1 = nn.LayerNorm(n_embed)
+        self.ln2 = nn.LayerNorm(n_embed)
 
     def forward(self,x):
+        x = self.ln1(x)
         x = x + self.sa_heads(x)
+        x = self.ln2(x)
         x = x + self.ffwd(x)
         return x
 
@@ -113,11 +125,8 @@ class TransformerDecoder(nn.Module):
         super().__init__()
         self.embedding_table = nn.Embedding(vocab_size,n_embed)
         self.positon_embedding = nn.Embedding(block_size,n_embed)
-        self.blocks = nn.Sequential(
-            Block(n_embed,n_heads),
-            Block(n_embed,n_heads),
-            Block(n_embed,n_heads),
-        )
+        self.blocks = nn.Sequential(*[Block(n_embed,n_heads) for _ in range(n_layer)])
+        self.ln_f = nn.LayerNorm(n_embed)
         self.lm_head = nn.Linear(n_embed,vocab_size)
     
     def forward(self,x,targets=None):
@@ -127,6 +136,7 @@ class TransformerDecoder(nn.Module):
         pos_emb = self.positon_embedding(torch.arange(T,device=device)) # T,n_embed
         x = tok_emb + pos_emb # B,T,n_embed
         x = self.blocks(x)
+        x = self.ln_f(x)
         logits = self.lm_head(x) # B,T,vocab_size
         if targets!=None:
             B,T,C = logits.shape
