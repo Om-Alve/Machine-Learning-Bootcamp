@@ -7,9 +7,10 @@ batch_size = 32
 block_size = 8
 max_iters = 3000
 eval_interval= 300
-learning_rate = 1e-2
+learning_rate = 1e-3
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 eval_iters = 200
+n_embed = 32
 
 torch.manual_seed(42)
 
@@ -53,12 +54,41 @@ def estimate_loss():
     model.train()
     return out
 
-class BigramModel(nn.Module):
-    def __init__(self,vocab_size):
+class Head(nn.Module):
+    def __init__(self,head_size):
         super().__init__()
-        self.embedding_table = nn.Embedding(vocab_size,vocab_size)
-    def forward(self,idx,targets=None):
-        logits = self.embedding_table(idx)
+        self.key = nn.Linear(n_embed,head_size,bias=False)
+        self.query = nn.Linear(n_embed,head_size,bias=False)
+        self.value = nn.Linear(n_embed,head_size,bias=False)
+        self.register_buffer('tril',torch.tril(torch.ones(block_size,block_size)))
+    def forward(self,x):
+        # x : (B,T,n_embed)
+        B,T,C = x.shape
+        k = self.key(x)  
+        q = self.query(x)
+        w = q @ k.transpose(-1,-2) / (C ** 0.5) # (B,T,T)
+        w = w.masked_fill(self.tril == 0, float('-inf'))
+        w = F.softmax(w,dim=-1)
+        v = self.value(x)
+        out = w @ v
+        return out
+
+class BigramModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.embedding_table = nn.Embedding(vocab_size,n_embed)
+        self.positon_embedding = nn.Embedding(block_size,n_embed)
+        self.sa_head = Head(n_embed)
+        self.lm_head = nn.Linear(n_embed,vocab_size)
+    
+    def forward(self,x,targets=None):
+        # x : (B,T)
+        B,T = x.shape 
+        tok_emb = self.embedding_table(x) # B,T,n_embed
+        pos_emb = self.positon_embedding(torch.arange(T,device=device)) # T,n_embed
+        x = tok_emb + pos_emb # B,T,n_embed
+        x = self.sa_head(x)
+        logits = self.lm_head(x) # B,T,vocab_size
         if targets!=None:
             B,T,C = logits.shape
             logits = logits.view(B*T,C)
@@ -68,7 +98,7 @@ class BigramModel(nn.Module):
             loss = None
         return logits,loss
 
-model = BigramModel(vocab_size)
+model = BigramModel()
 m = model.to(device)
 
 optimizer = torch.optim.Adam(model.parameters(),lr=learning_rate)
