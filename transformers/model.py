@@ -7,7 +7,7 @@ batch_size = 32
 block_size = 8
 max_iters = 3000
 eval_interval= 300
-learning_rate = 1e-3
+learning_rate = 3e-4
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 eval_iters = 200
 n_embed = 32
@@ -55,6 +55,17 @@ def estimate_loss():
     model.train()
     return out
 
+class FeedForward(nn.Module):
+    def __init__(self,n_embd):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(n_embd, 4 * n_embd),
+            nn.ReLU(),
+            nn.Linear(4 * n_embd, n_embd),
+        )
+
+    def forward(self,x):
+        return self.net(x)
 
 class Head(nn.Module):
     def __init__(self,head_size):
@@ -78,18 +89,34 @@ class Head(nn.Module):
 class MultiHeadAttention(nn.Module):
     def __init__(self,num_heads,head_size):
         super().__init__()
-        self.heads = nn.ModuleList([Head(head_size)] for _ in range(num_heads))
+        self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
     
     def forward(self,X):
         return torch.cat([head(X) for head in self.heads],dim=-1)
     
+
+class Block(nn.Module):
+    def __init__(self,n_embed,n_heads):
+        super().__init__()
+        self.sa_heads = MultiHeadAttention(n_heads,n_embed // n_heads)
+        self.ffwd = FeedForward(n_embed)
+
+    def forward(self,x):
+        x = self.sa_heads(x)
+        x = self.ffwd(x)
+        return x
+
 
 class TransformerDecoder(nn.Module):
     def __init__(self):
         super().__init__()
         self.embedding_table = nn.Embedding(vocab_size,n_embed)
         self.positon_embedding = nn.Embedding(block_size,n_embed)
-        self.sa_head = MultiHeadAttention(n_heads,n_embed // n_heads)
+        self.blocks = nn.Sequential(
+            Block(n_embed,n_heads),
+            Block(n_embed,n_heads),
+            Block(n_embed,n_heads),
+        )
         self.lm_head = nn.Linear(n_embed,vocab_size)
     
     def forward(self,x,targets=None):
@@ -98,7 +125,7 @@ class TransformerDecoder(nn.Module):
         tok_emb = self.embedding_table(x) # B,T,n_embed
         pos_emb = self.positon_embedding(torch.arange(T,device=device)) # T,n_embed
         x = tok_emb + pos_emb # B,T,n_embed
-        x = self.sa_head(x)
+        x = self.blocks(x)
         logits = self.lm_head(x) # B,T,vocab_size
         if targets!=None:
             B,T,C = logits.shape
@@ -112,7 +139,7 @@ class TransformerDecoder(nn.Module):
 model = TransformerDecoder()
 m = model.to(device)
 
-optimizer = torch.optim.Adam(model.parameters(),lr=learning_rate)
+optimizer = torch.optim.Adam(m.parameters(),lr=learning_rate)
 
 for iter in range(max_iters):
     x,y = get_batch("train")
