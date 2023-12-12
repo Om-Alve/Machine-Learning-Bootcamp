@@ -1,0 +1,6 @@
+Collecting portalocker
+  Downloading portalocker-2.8.2-py3-none-any.whl.metadata (8.5 kB)
+Requirement already satisfied: pywin32>=226 in c:\users\omalv\appdata\roaming\python\python311\site-packages (from portalocker) (306)
+Downloading portalocker-2.8.2-py3-none-any.whl (17 kB)
+Installing collected packages: portalocker
+Successfully installed portalocker-2.8.2

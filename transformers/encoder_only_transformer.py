@@ -85,3 +85,4 @@ class Encoder(nn.Module):
             return x,loss
         else:
             return x
+    

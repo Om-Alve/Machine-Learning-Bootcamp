@@ -58,7 +58,6 @@ def estimate_loss():
     return out
 
 
-
 class FeedForward(nn.Module):
     def __init__(self,n_embd):
         super().__init__()
@@ -85,8 +84,8 @@ class Head(nn.Module):
         B,T,C = x.shape
         k = self.key(x)  
         q = self.query(x)
-        w = q @ k.transpose(-1,-2) / (C ** 0.5) # (B,T,T)
-        w = w.masked_fill(self.tril == 0, float('-inf'))
+        w = q @ k.transpose(-2,-1) / (C ** 0.5) # (B,T,T)
+        w = w.masked_fill(self.tril[:T,:T] == 0, float('-inf'))
         w = F.softmax(w,dim=-1)
         w = self.dropout(w)
         v = self.value(x)
@@ -146,7 +145,7 @@ class TransformerDecoder(nn.Module):
         else:
             loss = None
         return logits,loss
-
+    
 model = TransformerDecoder()
 m = model.to(device)
 
